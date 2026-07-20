@@ -1,0 +1,43 @@
+# Dependency directories
+node_modules/
+
+# Environment variables (tất cả file .env)
+.env
+.env.*
+!.env.example
+
+# Build output
+frontend/build/
+dist/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+
+# Uploads (user-generated content)
+backend/uploads/avatars/*
+!backend/uploads/avatars/.gitkeep
+uploads/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Capacitor build artifacts
+frontend/android/
+frontend/ios/
+
+# Vercel
+Vercel_Deployment_Guide.md
+
+# Debug/Test scripts (chứa thông tin nhạy cảm)
+backend/test-mongo.js
+backend/test-dns.js
+
+# Lock file ở root (không cần thiết)
+/package-lock.jsonfrontend/nul

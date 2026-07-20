@@ -1,0 +1,162 @@
+const express = require('express');
+const dotenv = require('dotenv');
+const cors = require('cors');
+const path = require('path');
+const rateLimit = require('express-rate-limit');
+const connectDB = require('./config/db');
+
+// Load env vars (only when running locally, Vercel uses dashboard env vars)
+if (!process.env.VERCEL) {
+    dotenv.config({ override: true });
+}
+
+// Connect to database is now handled by middleware
+const app = express();
+
+const normalizeOrigin = (value) => {
+    if (!value) return [];
+
+    return value
+        .split(',')
+        .map((entry) => entry.trim())
+        .filter(Boolean)
+        .flatMap((entry) => {
+            if (/^https?:\/\//i.test(entry)) {
+                return [entry.replace(/\/$/, '')];
+            }
+
+            return [
+                `https://${entry.replace(/\/$/, '')}`,
+            ];
+        });
+};
+
+const parseAllowedOrigins = () => {
+    const configuredOrigins = [
+        process.env.CLIENT_URL,
+        process.env.CLIENT_URLS,
+        process.env.CORS_ORIGINS,
+    ]
+        .filter(Boolean)
+        .flatMap((value) => normalizeOrigin(value));
+
+    const localOrigins = [
+        'http://localhost:3000',
+        'http://localhost:3001',
+        'http://127.0.0.1:3000',
+        'http://127.0.0.1:3001',
+        'http://localhost:5173',
+        'http://127.0.0.1:5173',
+        'http://localhost:4173',
+        'http://127.0.0.1:4173',
+    ];
+
+    const productionOrigins = [
+        'https://project-game-nckh.onrender.com',
+        ...normalizeOrigin(process.env.VERCEL_URL),
+        ...normalizeOrigin(process.env.VERCEL_BRANCH_URL),
+        ...normalizeOrigin(process.env.VERCEL_PROJECT_PRODUCTION_URL),
+    ];
+
+    return Array.from(
+        new Set([
+            ...(process.env.NODE_ENV === 'production' ? productionOrigins : []),
+            ...localOrigins,
+            ...configuredOrigins,
+        ])
+    );
+};
+
+// CORS Configuration
+const allowedOrigins = parseAllowedOrigins();
+const corsOptions = {
+    origin(origin, callback) {
+        if (!origin || allowedOrigins.includes(origin)) {
+            return callback(null, true);
+        }
+
+        return callback(new Error(`CORS blocked for origin: ${origin}`));
+    },
+    credentials: true
+};
+app.use(cors(corsOptions));
+app.options(/.*/, cors(corsOptions));
+app.use(express.json());
+
+// Rate Limiting
+const generalLimiter = rateLimit({
+    windowMs: 1 * 60 * 1000, // 1 minute
+    max: 100,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { success: false, message: 'Quá nhiều yêu cầu. Vui lòng thử lại sau.' },
+});
+
+const authLimiter = rateLimit({
+    windowMs: 1 * 60 * 1000, // 1 minute
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { success: false, message: 'Quá nhiều lần đăng nhập. Vui lòng thử lại sau 1 phút.' },
+});
+
+app.use('/api', generalLimiter);
+app.use('/api/login', authLimiter);
+app.use('/api/register', authLimiter);
+app.use('/api/google-login', authLimiter);
+
+// Middleware: Yêu cầu kết nối DB trước khi xử lý request (Rất quan trọng cho Vercel Serverless)
+app.use(async (req, res, next) => {
+    try {
+        await connectDB();
+        next();
+    } catch (err) {
+        console.error("Lỗi kết nối CSDL trong middleware:", err.message);
+        res.status(500).json({ 
+            success: false, 
+            message: "Lỗi Server Internal: Không thể kết nối đến Cơ sở dữ liệu. Vui lòng kiểm tra lại cấu hình MONGO_URI trên Vercel và Whitelist IP trên MongoDB Atlas.",
+            error: err.message
+        });
+    }
+});
+
+// Serve uploaded files (only for local development, not needed on Vercel)
+if (!process.env.VERCEL) {
+    app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+}
+
+// Mount routers
+const questionRoutes = require('./routes/questionRoutes');
+const apiRoutes = require('./routes/api');
+
+app.use('/api/questions', questionRoutes);
+app.use('/api', apiRoutes);
+
+// --- PRODUCTION: Serve React frontend (only for non-Vercel deploys like Render) ---
+if (process.env.NODE_ENV === 'production' && !process.env.VERCEL) {
+    app.use(express.static(path.join(__dirname, '..', 'frontend', 'build')));
+    app.get('*', (req, res) => {
+        res.sendFile(path.join(__dirname, '..', 'frontend', 'build', 'index.html'));
+    });
+}
+
+// Global Error Handler
+app.use((err, req, res, next) => {
+    console.error(err.stack);
+    const isProduction = process.env.NODE_ENV === 'production';
+    res.status(err.status || 500).json({
+        success: false,
+        message: isProduction ? "Lỗi máy chủ nội bộ" : (err.message || "Lỗi máy chủ nội bộ")
+    });
+});
+
+// Only listen when running locally (Vercel manages the HTTP server)
+if (!process.env.VERCEL) {
+    const PORT = process.env.PORT || 5000;
+    app.listen(PORT, () => {
+        console.log(`🚀 Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`);
+    });
+}
+
+// Export app for Vercel serverless function
+module.exports = app;
